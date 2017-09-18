@@ -1,0 +1,112 @@
+---
+title: "Analysis for real-time tracking of a microbial contamination event and subsequent shock-chlorination in drinking water"
+author: "Ruben Props"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    highlight: haddock
+    keep_md: yes
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+      toc_depth: 2
+---
+
+```{r setup, include = FALSE, warning = FALSE}
+knitr::opts_chunk$set(eval = TRUE, 
+                      echo = TRUE, 
+                      cache = TRUE,
+                      include = TRUE,
+                      collapse = FALSE,
+                      dependson = NULL,
+                      engine = "R", # Chunks will always have R code, unless noted
+                      error = TRUE,
+                      fig.path="Figures/cached/",  # Set the figure options
+                      fig.align = "center"
+                      )
+# Load libraries
+library('Phenoflow')
+library('ggplot2')
+library('dplyr')
+```
+
+```{r run-default-phenoflow, warning = FALSE}
+# path
+path <- "FlowRepository_FR-FCM-ZY2V_files/"
+
+# Import .fcs data
+flowData <- read.flowSet(path = path, transformation = FALSE, pattern = ".fcs")
+flowData <- flowData[fsApply(x = flowData, FUN = function(x) nrow(x), use.exprs = TRUE)!= 0]
+
+# Create gates for counting cells
+sqrcut1 <- matrix(c(8.5,8.5,15,15,3,7.5,14,3)/16.53942,ncol=2, nrow=4)
+colnames(sqrcut1) <- c("FL1-H","FL3-H")
+polyGate1 <- polygonGate(.gate=sqrcut1, filterId = "Total Cells")
+param <- c("FL1-H", "FL3-H", "SSC-H", "FSC-H")
+
+# Order the samples according to the timepoint
+# this will make plotting easier
+names.order <- c()
+for(i in 1: nrow(flowData@phenoData)){
+    names.order[i] <- as.numeric(strsplit(rownames(flowData@phenoData[i]),"_")[[1]][1])
+}
+flowData <- flowData[order(names.order)]
+
+# Extract volume for calculating cell densities
+vol.temp <- c()
+for(i in 1:length(flowData)){
+    vol.temp[i] <- as.numeric(flowData[[i]]@description$`$VOL`)/1000
+    }
+
+# Extract the cell counts
+s <- flowCore::filter(flowData, polyGate1)
+TotalCount <- summary(s); TotalCount <- toTable(TotalCount)
+
+# Store counts in dataframe
+count_results <- data.frame(Counts = TotalCount$true, volume = vol.temp)
+rownames(count_results) <- flowCore::sampleNames(flowData)
+
+# Extract staining label from sample names
+lab.chlor<-c()
+for(i in 1:nrow(count_results)) lab.chlor[i] <- strsplit(strsplit(rownames(count_results)[i],"_")[[1]][5],".fcs")[[1]][1]
+count_results$stain <- as.factor(lab.chlor)
+```
+
+```{r run-beta-div, warning = FALSE, fig.width = 7, figh.height = 7, dpi = 400}
+# Calculate fingerprint for beta-diversity analysis
+fbasis <- flowBasis(flowData[count_results$stain == "SG"], param, nbin = 128, bw = 0.01, normalize = function(x) x)
+
+# Perform PCoA
+pcoa <- beta_div_fcm(fbasis, ord.type="pcoa")
+
+### Add labels for chlorination
+chlor.time <- c(); chlor.time[1:81] <- "Tap water"
+chlor.time[17:31] <- "Contamination"
+chlor.time[32:47] <- "Disinfection"
+chlor.time[48:81] <- "Tap water (wash-in)"
+chlor.time <- factor(chlor.time,levels = c("Tap water", "Contamination", "Disinfection","Tap water (wash-in)"))
+
+### Plot beta-diversity analysis
+p_beta <- plot_beta_fcm(pcoa, color = chlor.time, labels = c("Reactor phase"))+ ggtitle("") + 
+  geom_point(shape = 21, size = 4, aes(fill = chlor.time))+
+  labs(fill="Reactor phase",x=paste("PCoA axis 1 (",round(100*pcoa$eig/sum(pcoa$eig),1)[1],"%)", sep=""),y=paste("PCoA axis 2 (",round(100*pcoa$eig/sum(pcoa$eig),1)[2],"%)", sep=""))+
+  scale_fill_manual(values = c("#0000b3", "#A020F0FF", "#FFA500FF","#66ccff"))+ 
+  scale_color_manual(values = rep("black", 4))+
+  theme_bw()+
+  xlim(-0.3,0.4)
+# Print plot
+print(p_beta)
+
+count_results_SG <- count_results %>% filter(stain == "SG")
+count_results_SG$time <- chlor.time
+p_counts <- ggplot(data=count_results_SG, aes(x=seq(1:81),
+                                              y=Counts/volume,color=time,fill=time)) + 
+  scale_fill_manual(values = c("#0000b3", "#A020F0FF", "#FFA500FF","#66ccff"))+
+  geom_point(size=4, shape=21, color="black")+labs(x="Time (min)", y="Cell density (cells/µL)",fill="Reactor phase")+ theme_bw()
+
+# Print plot
+print(p_counts)
+```
