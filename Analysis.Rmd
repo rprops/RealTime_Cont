@@ -34,7 +34,9 @@ library('dplyr')
 ```
 
 ```{r run-default-phenoflow, warning = FALSE}
-# path
+# path to data from flowrepository
+# This data has already been denoised + normalized
+# URL to data: https://flowrepository.org/id/FR-FCM-ZY2V
 path <- "FlowRepository_FR-FCM-ZY2V_files/"
 
 # Import .fcs data
